@@ -11,6 +11,8 @@ type Error struct {
 	Code    string
 	Parent  *Error
 	stack   *stack
+
+	original error
 }
 
 func From(err interface{}) *Error {
@@ -20,6 +22,14 @@ func From(err interface{}) *Error {
 
 	if e, ok := err.(*Error); ok {
 		return e
+	}
+
+	if e, ok := err.(error); ok {
+		return &Error{
+			Message:  fmt.Sprintf("%v", err),
+			stack:    callers(),
+			original: e,
+		}
 	}
 
 	return &Error{
@@ -32,40 +42,64 @@ func New(message string) *Error {
 	return From(message)
 }
 
-func (e *Error) WithMessage(message interface{}) *Error {
-	if e == nil {
-		return nil
+func (e *Error) SetParent(parent interface{}) {
+	if e != nil {
+		e.Parent = From(parent)
 	}
-
-	e.Message = fmt.Sprintf("%v", message)
-	return e
 }
 
-func (e *Error) WithCode(code string) *Error {
-	if e == nil {
-		return nil
+func (e *Error) WithParent(parent interface{}) *Error {
+	if err := clone(e); err != nil {
+		err.SetParent(parent)
+		return err
 	}
 
-	e.Code = code
-	return e
+	return nil
+}
+
+func (e *Error) SetMessage(message interface{}) {
+	if e != nil {
+		e.Message = fmt.Sprintf("%v", message)
+	}
+}
+
+func (e *Error) WithMessage(message interface{}) *Error {
+	if err := clone(e); err != nil {
+		err.SetMessage(message)
+		return err.WithParent(e)
+	}
+
+	return nil
+}
+
+func (e *Error) SetCode(code interface{}) {
+	if e != nil {
+		e.Code = fmt.Sprintf("%v", code)
+	}
+}
+
+func (e *Error) WithCode(code interface{}) *Error {
+	if err := clone(e); err != nil {
+		err.SetCode(code)
+		return err.WithParent(e)
+	}
+
+	return nil
+}
+
+func (e *Error) ResetStack() {
+	if e != nil {
+		e.stack = callers()
+	}
 }
 
 func (e *Error) WithStack() *Error {
-	if e == nil {
-		return nil
+	if err := clone(e); err != nil {
+		err.ResetStack()
+		return err.WithParent(e)
 	}
 
-	e.stack = callers()
-	return e
-}
-
-func (e *Error) WithParent(err interface{}) *Error {
-	if e == nil {
-		return nil
-	}
-
-	e.Parent = From(err)
-	return e
+	return nil
 }
 
 func (e *Error) Error() string {
@@ -85,55 +119,15 @@ func (e *Error) Is(err error) bool {
 		return false
 	}
 
-	if e.Code == "" {
-		return false
-	}
-
-	appErr, ok := err.(*Error)
-	if ok && appErr.Code == e.Code {
+	if e.original != nil && e.original == err {
 		return true
 	}
 
-	return false
+	return e.Code != "" && e.Code == From(err).Code
 }
 
 func (e *Error) GetStack() []uintptr {
 	return *e.stack
-}
-
-// wrapping logic
-
-func (e *Error) WrapWithMessage(message string) *Error {
-	err := clone(e)
-
-	if err == nil {
-		return nil
-	}
-
-	return err.
-		WithMessage(message).
-		WithParent(e)
-}
-
-func (e *Error) WrapWithCode(code string) *Error {
-	err := clone(e)
-
-	if err == nil {
-		return nil
-	}
-
-	return err.
-		WithCode(code).
-		WithParent(e)
-}
-
-func (e *Error) WrapWithPrefix(prefix string) *Error {
-	message := e.Message
-	if prefix != "" {
-		message = prefix + ": " + message
-	}
-
-	return e.WrapWithMessage(message)
 }
 
 func clone(err *Error) *Error {
